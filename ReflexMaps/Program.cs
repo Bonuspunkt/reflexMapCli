@@ -21,17 +21,25 @@ namespace ReflexMaps
                 LastUpdate = new DateTimeOffset(2000, 1, 1, 0, 0, 0, TimeSpan.Zero);
                 SourceUrl = DefaultSource;
                 MapPath = TargetPath;
+                MapVersions = new Dictionary<string, DateTimeOffset>();
             }
 
             public DateTimeOffset LastUpdate { get; set; }
             public string SourceUrl { get; set; }
             public string MapPath { get; set; }
+            public Dictionary<string, DateTimeOffset> MapVersions { get; set; }
         }
 
         private class Response
         {
+            public class MapInfo 
+            {
+                public string Url { get; set; }
+                public DateTimeOffset LastUpdated { get; set; }
+            }
+
             public DateTimeOffset Now { get; set; }
-            public IEnumerable<string> ToUpdate { get; set; }
+            public IEnumerable<MapInfo> ToUpdate { get; set; }
         }
 
         static void Main(string[] args)
@@ -64,28 +72,45 @@ namespace ReflexMaps
             }
 
             var url = config.SourceUrl;
-            if (args[0] != "all")
+            var isAll = args[0] == "all";
+            if (!isAll)
             {
                 url += args[0];
             }
-            url += "?since=" + HttpUtility.UrlEncode(JsonConvert.SerializeObject(config.LastUpdate).Replace("\"", ""));
+            else
+            {
+                url += "?since=" +
+                       HttpUtility.UrlEncode(JsonConvert.SerializeObject(config.LastUpdate).Replace("\"", ""));
+            }
 
             var webClient = new WebClient();
             var body = webClient.DownloadString(url);
             var response = JsonConvert.DeserializeObject<Response>(body);
             Console.WriteLine("found {0} updates", response.ToUpdate.Count());
 
-            foreach (var download in response.ToUpdate)
+            foreach (var mapInfo in response.ToUpdate)
             {
-                var filename = Path.GetFileName(download);
+                var filename = Path.GetFileName(mapInfo.Url);
                 var targetPath = Path.Combine(config.MapPath, filename);
 
-                Console.WriteLine("downloading {0} to {1}", download, targetPath);
+                if (config.MapVersions.ContainsKey(mapInfo.Url) &&
+                    config.MapVersions[mapInfo.Url] == mapInfo.LastUpdated)
+                {
+                    Console.WriteLine("already latest version of {0}", mapInfo.Url);
+                    continue;
+                }
 
-                webClient.DownloadFile(new Uri(download), targetPath);
+                Console.WriteLine("downloading {0} to {1}", mapInfo.Url, targetPath);
+
+                webClient.DownloadFile(new Uri(mapInfo.Url), targetPath);
+                config.MapVersions[mapInfo.Url] = mapInfo.LastUpdated;
             }
             Console.WriteLine("storing update information");
-            config.LastUpdate = response.Now;
+
+            if (isAll)
+            {
+                config.LastUpdate = response.Now;
+            }
 
             File.WriteAllText(settingFile, JsonConvert.SerializeObject(config));
         }
